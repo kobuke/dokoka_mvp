@@ -174,14 +174,28 @@ export function MapView() {
     }
   }, []);
 
+  // Center on current location
+  const handleGoToCurrentLocation = useCallback(() => {
+    if (map.current && geolocation.lat && geolocation.lng) {
+      map.current.flyTo({
+        center: [geolocation.lng, geolocation.lat],
+        zoom: 18,
+        speed: 1.5,
+        curve: 1.5,
+      });
+    }
+  }, [geolocation.lat, geolocation.lng]);
+
   // Initialize Map
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
 
-    // Default center (Tokyo) or user location
-    const initialCenter: [number, number] = currentUser
-      ? [currentUser.lng, currentUser.lat]
-      : [139.7009, 35.6592];
+    // Use geolocation if available, otherwise default to Tokyo
+    const initialCenter: [number, number] = geolocation.lat && geolocation.lng
+      ? [geolocation.lng, geolocation.lat]
+      : currentUser
+        ? [currentUser.lng, currentUser.lat]
+        : [139.7009, 35.6592];
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
@@ -194,7 +208,7 @@ export function MapView() {
     map.current.addControl(new maplibregl.AttributionControl(), "top-left"); // Moved to avoid bottom layout
     map.current.addControl(new maplibregl.NavigationControl(), "bottom-right"); // Bottom right, lower precedence
 
-  }, [currentUser]);
+  }, [currentUser, geolocation.lat, geolocation.lng]);
 
   // Update Markers
   useEffect(() => {
@@ -243,6 +257,18 @@ export function MapView() {
         {/* Top bar - countdown */}
         <div className="absolute top-20 left-4 right-4 flex justify-center z-[500] pointer-events-none">
           <CountdownTimer />
+        </div>
+
+        {/* Current Location Button */}
+        <div className="absolute bottom-4 right-4 z-[500]">
+          <Button
+            onClick={handleGoToCurrentLocation}
+            size="icon"
+            className="h-12 w-12 rounded-full bg-white hover:bg-gray-100 text-gray-700 shadow-lg"
+            disabled={!geolocation.lat || !geolocation.lng}
+          >
+            <Navigation className="w-5 h-5" />
+          </Button>
         </div>
       </div>
 
