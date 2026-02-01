@@ -3,21 +3,21 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { MapPin, Clock, Share2, QrCode, Copy, Check } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "../components/ui/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "../components/ui/select";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { generateId } from "@/lib/room-context";
+} from "../components/ui/dialog";
+import { generateId } from "../lib/room-context";
 
 export default function HomePage() {
   const router = useRouter();
