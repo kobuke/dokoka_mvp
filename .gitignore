@@ -33,3 +33,4 @@ ts-debug.log*
 
 # vercel
 .vercel
+Configuration updated to ignore logs
