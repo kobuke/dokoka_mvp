@@ -19,7 +19,7 @@ import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { useRoom, type User } from "../lib/room-context";
 import { useGeolocation } from "../hooks/use-geolocation";
-import { createPinIcon, createPinElement } from "./maplibre-pin";
+import { createPinElement } from "./maplibre-pin";
 import {
   Collapsible,
   CollapsibleContent,
@@ -79,10 +79,10 @@ function ParticipantItem({
       <div className="flex items-center gap-3">
         <div
           className={`w-10 h-10 rounded-full flex items-center justify-center ${user.status === "sleep"
-              ? "opacity-50"
-              : user.status === "offline"
-                ? "grayscale opacity-40"
-                : ""
+            ? "opacity-50"
+            : user.status === "offline"
+              ? "grayscale opacity-40"
+              : ""
             }`}
           style={{ backgroundColor: user.color }}
         >
