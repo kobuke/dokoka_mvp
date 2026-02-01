@@ -6,8 +6,10 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
+import { supabase } from "./supabase";
 
 export interface User {
   id: string;
@@ -56,42 +58,9 @@ export function generateRandomColor(): string {
     "#F59E0B", // amber
     "#8B5CF6", // violet
     "#EC4899", // pink
-    "#06B6D4", // cyan
-    "#F97316", // orange
   ];
   return colors[Math.floor(Math.random() * colors.length)];
 }
-
-// Mock users for demo
-const mockUsers: User[] = [
-  {
-    id: "user2",
-    nickname: "たけし",
-    color: "#EF4444",
-    lat: 35.6595,
-    lng: 139.7005,
-    status: "active",
-    lastUpdate: Date.now(),
-  },
-  {
-    id: "user3",
-    nickname: "さくら",
-    color: "#10B981",
-    lat: 35.6605,
-    lng: 139.699,
-    status: "sleep",
-    lastUpdate: Date.now() - 120000,
-  },
-  {
-    id: "user4",
-    nickname: "けんた",
-    color: "#F59E0B",
-    lat: 35.6585,
-    lng: 139.701,
-    status: "offline",
-    lastUpdate: Date.now() - 600000,
-  },
-];
 
 export function RoomProvider({ children }: { children: ReactNode }) {
   const [room, setRoom] = useState<Room | null>(null);
@@ -101,6 +70,9 @@ export function RoomProvider({ children }: { children: ReactNode }) {
   const [wakeLockSentinel, setWakeLockSentinel] =
     useState<WakeLockSentinel | null>(null);
 
+  // Supabase Channel Ref
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
   // Load user from local storage
   useEffect(() => {
     if (typeof window !== "undefined" && room) {
@@ -109,11 +81,6 @@ export function RoomProvider({ children }: { children: ReactNode }) {
         try {
           const userData = JSON.parse(stored);
           setCurrentUser(userData);
-          // Also set as active immediately to show on map
-          setUsers(prev => {
-            // Avoid dupes if needed, or rely on update loop
-            return prev;
-          });
         } catch (e) {
           console.error("Failed to restore user", e);
         }
@@ -121,11 +88,66 @@ export function RoomProvider({ children }: { children: ReactNode }) {
     }
   }, [room]);
 
+  // Sync with Supabase Realtime
+  useEffect(() => {
+    if (!room || !currentUser) return;
+
+    // Clean up previous channel if any
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+    }
+
+    const channel = supabase.channel(`room:${room.id}`, {
+      config: {
+        presence: {
+          key: currentUser.id,
+        },
+      },
+    });
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const newState = channel.presenceState();
+        const activeUsers: User[] = [];
+
+        Object.keys(newState).forEach(key => {
+          if (key === currentUser.id) return; // Skip self
+          // Each key has an array of presence objects
+          const presences = newState[key] as unknown as User[];
+          if (presences && presences.length > 0) {
+            // Take the latest one
+            activeUsers.push(presences[0]);
+          }
+        });
+
+        setUsers(activeUsers);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track(currentUser);
+        }
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [room?.id, currentUser?.id]);
+
+  // Update Presence when currentUser changes
+  useEffect(() => {
+    if (channelRef.current && currentUser) {
+      channelRef.current.track(currentUser).catch(err => {
+        console.error("Presence track error:", err);
+      });
+    }
+  }, [currentUser]);
+
+
   // Update user position
   const updateUserPosition = useCallback((lat: number, lng: number) => {
     setCurrentUser((prev) => {
-      // Create new user state if null (first update after restore might need this?) 
-      // Actually we only update if logged in.
       if (!prev) return null;
 
       const updated = {
@@ -136,7 +158,7 @@ export function RoomProvider({ children }: { children: ReactNode }) {
         status: "active" as const,
       };
 
-      // Persist to local storage (debouncing would be better but this is MVP)
+      // Persist to local storage
       if (room) {
         localStorage.setItem(`dokoka_user_${room.id}`, JSON.stringify(updated));
       }
@@ -169,48 +191,24 @@ export function RoomProvider({ children }: { children: ReactNode }) {
     }
   }, [wakeLockEnabled, wakeLockSentinel]);
 
-  // Periodic status update check
+  // Cleanup wake lock on unmount
   useEffect(() => {
-    const checkStatus = () => {
-      const now = Date.now();
-      const statusThresholds = {
-        sleep: 5 * 60 * 1000, // 5 minutes
-        offline: 15 * 60 * 1000, // 15 minutes
-      };
-
-      const getStatus = (lastUpdate: number): "active" | "sleep" | "offline" => {
-        const diff = now - lastUpdate;
-        if (diff > statusThresholds.offline) return "offline";
-        if (diff > statusThresholds.sleep) return "sleep";
-        return "active";
-      };
-
-      setCurrentUser((prev) => {
-        if (!prev) return null;
-        const newStatus = getStatus(prev.lastUpdate);
-        return newStatus !== prev.status
-          ? { ...prev, status: newStatus }
-          : prev;
-      });
-
-      setUsers((prevUsers) =>
-        prevUsers.map((user) => {
-          const newStatus = getStatus(user.lastUpdate);
-          return newStatus !== user.status
-            ? { ...user, status: newStatus }
-            : user;
-        })
-      );
+    return () => {
+      if (wakeLockSentinel) {
+        wakeLockSentinel.release();
+      }
     };
+  }, [wakeLockSentinel]);
 
-    const interval = setInterval(checkStatus, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
-  }, []);
+  // Status check (local only, presence handles remote timeout implicitly if they disconnect)
+  // We can add "offline" state if needed, but Presence usually handles "left" event.
+  // For MVP, if they disconnect, they disappear from map.
 
   // Send "I'm here" notification
   const sendHereNotification = useCallback(() => {
-    // In a real app, this would send a push notification or update
+    // In a real app, this would send a broadcast message
     console.log("Sending 'I am here' notification");
+    // TODO: Implement Supabase Broadcast if needed
   }, []);
 
   // Get remaining time in milliseconds
@@ -224,15 +222,6 @@ export function RoomProvider({ children }: { children: ReactNode }) {
     if (!room) return false;
     return Date.now() >= room.expiresAt;
   }, [room]);
-
-  // Cleanup wake lock on unmount
-  useEffect(() => {
-    return () => {
-      if (wakeLockSentinel) {
-        wakeLockSentinel.release();
-      }
-    };
-  }, [wakeLockSentinel]);
 
   return (
     <RoomContext.Provider
