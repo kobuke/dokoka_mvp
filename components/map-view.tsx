@@ -186,29 +186,43 @@ export function MapView() {
     }
   }, [geolocation.lat, geolocation.lng]);
 
-  // Initialize Map
+  // Initialize Map (only once)
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
 
-    // Use geolocation if available, otherwise default to Tokyo
-    const initialCenter: [number, number] = geolocation.lat && geolocation.lng
-      ? [geolocation.lng, geolocation.lat]
-      : currentUser
-        ? [currentUser.lng, currentUser.lat]
-        : [139.7009, 35.6592];
+    // Default center (will be updated when geolocation is available)
+    const initialCenter: [number, number] = currentUser
+      ? [currentUser.lng, currentUser.lat]
+      : [139.7009, 35.6592];
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: "https://tiles.openfreemap.org/styles/liberty",
       center: initialCenter,
-      zoom: 17, // Increased default zoom
+      zoom: 17,
       attributionControl: false,
     });
 
-    map.current.addControl(new maplibregl.AttributionControl(), "top-left"); // Moved to avoid bottom layout
-    map.current.addControl(new maplibregl.NavigationControl(), "bottom-right"); // Bottom right, lower precedence
+    map.current.addControl(new maplibregl.AttributionControl(), "top-left");
+    map.current.addControl(new maplibregl.NavigationControl(), "bottom-right");
 
-  }, [currentUser, geolocation.lat, geolocation.lng]);
+  }, [currentUser]);
+
+  // Auto-center to geolocation when it becomes available
+  useEffect(() => {
+    if (map.current && geolocation.lat && geolocation.lng) {
+      // Only auto-center on first geolocation acquisition
+      const hasMovedToLocation = sessionStorage.getItem('map_centered_to_location');
+      if (!hasMovedToLocation) {
+        map.current.flyTo({
+          center: [geolocation.lng, geolocation.lat],
+          zoom: 17,
+          speed: 1.2,
+        });
+        sessionStorage.setItem('map_centered_to_location', 'true');
+      }
+    }
+  }, [geolocation.lat, geolocation.lng]);
 
   // Update Markers
   useEffect(() => {
@@ -260,12 +274,13 @@ export function MapView() {
         </div>
 
         {/* Current Location Button */}
-        <div className="absolute bottom-4 right-4 z-[500]">
+        <div className="absolute bottom-4 left-4 z-[500]">
           <Button
             onClick={handleGoToCurrentLocation}
             size="icon"
             className="h-12 w-12 rounded-full bg-white hover:bg-gray-100 text-gray-700 shadow-lg"
             disabled={!geolocation.lat || !geolocation.lng}
+            title="現在地へ移動"
           >
             <Navigation className="w-5 h-5" />
           </Button>
