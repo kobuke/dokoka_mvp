@@ -1,87 +1,30 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import {
-  MapPin,
-  Navigation,
   Users,
   Bell,
   ChevronUp,
   ExternalLink,
   Zap,
   Clock,
+  Loader2,
+  Navigation,
+  Settings2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { useRoom, type User } from "../lib/room-context";
 import { useGeolocation } from "../hooks/use-geolocation";
-
-// Map pin component
-function UserPin({
-  user,
-  isCurrentUser = false,
-  basePosition,
-}: {
-  user: User;
-  isCurrentUser?: boolean;
-  basePosition: { lat: number; lng: number };
-}) {
-  // Calculate position relative to base (center of map)
-  const offsetX = (user.lng - basePosition.lng) * 8000;
-  const offsetY = (basePosition.lat - user.lat) * 8000;
-
-  const statusClass =
-    user.status === "active"
-      ? "pin-active"
-      : user.status === "sleep"
-        ? "pin-sleep"
-        : "pin-offline";
-
-  return (
-    <div
-      className={`absolute flex flex-col items-center transition-all duration-500 ${statusClass}`}
-      style={{
-        left: `calc(50% + ${offsetX}px)`,
-        top: `calc(50% + ${offsetY}px)`,
-        transform: "translate(-50%, -100%)",
-      }}
-    >
-      {/* Name tag */}
-      <div
-        className={`px-2 py-1 rounded-lg text-xs font-medium text-white mb-1 shadow-lg whitespace-nowrap ${
-          isCurrentUser ? "bg-primary" : ""
-        }`}
-        style={{ backgroundColor: isCurrentUser ? undefined : user.color }}
-      >
-        {isCurrentUser ? "あなた" : user.nickname}
-      </div>
-
-      {/* Pin */}
-      <div className="relative">
-        <div
-          className={`w-8 h-8 rounded-full flex items-center justify-center shadow-lg ${
-            isCurrentUser ? "ring-2 ring-white" : ""
-          }`}
-          style={{ backgroundColor: user.color }}
-        >
-          {isCurrentUser ? (
-            <Navigation className="w-4 h-4 text-white" />
-          ) : (
-            <MapPin className="w-4 h-4 text-white" />
-          )}
-        </div>
-        {/* Pulse effect for active users */}
-        {user.status === "active" && (
-          <div
-            className="absolute inset-0 rounded-full animate-ping opacity-30"
-            style={{ backgroundColor: user.color }}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
+import { createPinIcon, createPinElement } from "./maplibre-pin";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./ui/collapsible";
 
 // Countdown timer component
 function CountdownTimer() {
@@ -116,26 +59,31 @@ function CountdownTimer() {
 function ParticipantItem({
   user,
   isCurrentUser = false,
+  onCenter,
 }: {
   user: User;
   isCurrentUser?: boolean;
+  onCenter: (lat: number, lng: number) => void;
 }) {
-  const handleOpenMaps = () => {
+  const handleOpenMaps = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Don't trigger center
     const url = `https://www.google.com/maps/dir/?api=1&destination=${user.lat},${user.lng}`;
     window.open(url, "_blank");
   };
 
   return (
-    <div className="flex items-center justify-between py-3 px-4 rounded-xl hover:bg-muted/30 transition-colors">
+    <div
+      className="flex items-center justify-between py-3 px-4 rounded-xl hover:bg-muted/30 transition-colors cursor-pointer active:bg-muted/50"
+      onClick={() => onCenter(user.lat, user.lng)}
+    >
       <div className="flex items-center gap-3">
         <div
-          className={`w-10 h-10 rounded-full flex items-center justify-center ${
-            user.status === "sleep"
+          className={`w-10 h-10 rounded-full flex items-center justify-center ${user.status === "sleep"
               ? "opacity-50"
               : user.status === "offline"
                 ? "grayscale opacity-40"
                 : ""
-          }`}
+            }`}
           style={{ backgroundColor: user.color }}
         >
           <span className="text-white font-medium text-sm">
@@ -163,7 +111,7 @@ function ParticipantItem({
         <Button
           variant="ghost"
           size="sm"
-          className="rounded-xl text-xs"
+          className="rounded-xl text-xs z-10 relative" // Ensure clickability
           onClick={handleOpenMaps}
         >
           <ExternalLink className="w-3 h-3 mr-1" />
@@ -183,8 +131,12 @@ export function MapView() {
     sendHereNotification,
     updateUserPosition,
   } = useRoom();
-  const [showParticipants, setShowParticipants] = useState(false);
+  const [showActions, setShowActions] = useState(false);
   const geolocation = useGeolocation();
+
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const map = useRef<maplibregl.Map | null>(null);
+  const markers = useRef<{ [key: string]: maplibregl.Marker }>({});
 
   // Start watching location on mount
   useEffect(() => {
@@ -210,131 +162,172 @@ export function MapView() {
     }
   }, [sendHereNotification]);
 
-  const basePosition = currentUser
-    ? { lat: currentUser.lat, lng: currentUser.lng }
-    : { lat: 35.6592, lng: 139.7009 };
+  // Center map on a user
+  const handleCenter = useCallback((lat: number, lng: number) => {
+    if (map.current) {
+      map.current.flyTo({
+        center: [lng, lat],
+        zoom: 18,
+        speed: 1.5,
+        curve: 1.5,
+      });
+    }
+  }, []);
+
+  // Initialize Map
+  useEffect(() => {
+    if (!mapContainer.current || map.current) return;
+
+    // Default center (Tokyo) or user location
+    const initialCenter: [number, number] = currentUser
+      ? [currentUser.lng, currentUser.lat]
+      : [139.7009, 35.6592];
+
+    map.current = new maplibregl.Map({
+      container: mapContainer.current,
+      style: "https://tiles.openfreemap.org/styles/liberty",
+      center: initialCenter,
+      zoom: 17, // Increased default zoom
+      attributionControl: false,
+    });
+
+    map.current.addControl(new maplibregl.AttributionControl(), "top-left"); // Moved to avoid bottom layout
+    map.current.addControl(new maplibregl.NavigationControl(), "bottom-right"); // Bottom right, lower precedence
+
+  }, [currentUser]);
+
+  // Update Markers
+  useEffect(() => {
+    if (!map.current) return;
+
+    const allUsers = [...users];
+    if (currentUser) allUsers.push(currentUser);
+
+    // Track active IDs to remove stale markers
+    const activeIds = new Set(allUsers.map(u => u.id));
+
+    // Remove old markers
+    Object.keys(markers.current).forEach(id => {
+      if (!activeIds.has(id)) {
+        markers.current[id].remove();
+        delete markers.current[id];
+      }
+    });
+
+    // Add/Update markers
+    allUsers.forEach(user => {
+      const isMe = currentUser?.id === user.id;
+
+      if (markers.current[user.id]) {
+        markers.current[user.id].setLngLat([user.lng, user.lat]);
+      } else {
+        const el = createPinElement(user, isMe);
+        // Add click listener to marker via element if needed, 
+        // but cleaner to just let user click the list
+
+        const marker = new maplibregl.Marker({ element: el })
+          .setLngLat([user.lng, user.lat])
+          .addTo(map.current!);
+
+        markers.current[user.id] = marker;
+      }
+    });
+
+  }, [users, currentUser]);
+
 
   return (
     <div className="h-screen w-full flex flex-col relative overflow-hidden">
       {/* Map container */}
-      <div className="flex-1 relative bg-slate-100 dark:bg-slate-900">
-        {/* Mock map background */}
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `
-              linear-gradient(rgba(200, 210, 220, 0.5) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(200, 210, 220, 0.5) 1px, transparent 1px)
-            `,
-            backgroundSize: "40px 40px",
-          }}
-        />
-
-        {/* Map tiles simulation */}
-        <div className="absolute inset-0 opacity-30">
-          <div className="absolute top-1/4 left-1/3 w-40 h-24 bg-green-200 dark:bg-green-900 rounded-lg" />
-          <div className="absolute bottom-1/3 right-1/4 w-32 h-32 bg-green-200 dark:bg-green-900 rounded-lg" />
-          <div className="absolute top-1/2 left-1/4 w-full h-1 bg-slate-300 dark:bg-slate-700 -rotate-12" />
-          <div className="absolute top-1/3 right-1/3 w-1 h-full bg-slate-300 dark:bg-slate-700" />
-        </div>
-
-        {/* User pins */}
-        {currentUser && (
-          <UserPin
-            user={currentUser}
-            isCurrentUser
-            basePosition={basePosition}
-          />
-        )}
-        {users.map((user) => (
-          <UserPin key={user.id} user={user} basePosition={basePosition} />
-        ))}
-
+      <div className="flex-1 relative z-0" ref={mapContainer}>
         {/* Top bar - countdown */}
-        <div className="absolute top-4 left-4 right-4 flex justify-center">
+        <div className="absolute top-20 left-4 right-4 flex justify-center z-[500] pointer-events-none">
           <CountdownTimer />
         </div>
       </div>
 
-      {/* Bottom sheet */}
-      <div
-        className={`glass border-t border-white/20 transition-all duration-300 ${
-          showParticipants ? "h-[60vh]" : "h-auto"
-        }`}
-      >
-        {/* Handle */}
-        <button
-          onClick={() => setShowParticipants(!showParticipants)}
-          className="w-full py-2 flex justify-center"
-        >
-          <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
-        </button>
+      {/* Bottom sheet - Always visible participant list */}
+      <div className="glass border-t border-white/20 z-[1000] pb-safe-area-bottom shadow-[0_-5px_20px_rgba(0,0,0,0.1)]">
 
-        {/* Controls */}
-        <div className="px-4 pb-4 flex flex-col gap-4">
-          {/* Action buttons row */}
-          <div className="flex items-center gap-3">
-            {/* Wake Lock toggle */}
-            <div
-              className={`flex-1 glass-card rounded-2xl p-4 flex items-center justify-between transition-all ${
-                wakeLockEnabled ? "glow-primary animate-glow" : ""
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Zap
-                  className={`w-5 h-5 ${wakeLockEnabled ? "text-primary" : "text-muted-foreground"}`}
-                />
-                <Label htmlFor="wakelock" className="text-sm font-medium">
-                  合流モード
-                </Label>
-              </div>
-              <Switch
-                id="wakelock"
-                checked={wakeLockEnabled}
-                onCheckedChange={toggleWakeLock}
-              />
-            </div>
+        {/* Main Content: Participant List */}
+        <div className="pt-2 px-2 pb-2">
 
-            {/* Notify button */}
-            <Button
-              id="notify-button"
-              onClick={handleNotify}
-              className="h-14 px-6 rounded-2xl font-semibold shadow-lg"
-            >
-              <Bell className="w-5 h-5 mr-2" />
-              今ここ!
-            </Button>
-          </div>
-
-          {/* Participants toggle */}
-          <button
-            onClick={() => setShowParticipants(!showParticipants)}
-            className="flex items-center justify-between p-4 rounded-2xl bg-muted/30 hover:bg-muted/50 transition-colors"
-          >
+          {/* Header / Actions Toggle */}
+          <div className="flex items-center justify-between px-2 mb-2">
             <div className="flex items-center gap-2">
-              <Users className="w-5 h-5 text-muted-foreground" />
-              <span className="font-medium text-sm">
-                参加者 ({users.length + 1}人)
+              <Users className="w-4 h-4 text-primary" />
+              <span className="font-bold text-sm">参加者</span>
+              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                {users.length + (currentUser ? 1 : 0)}人
               </span>
             </div>
-            <ChevronUp
-              className={`w-5 h-5 text-muted-foreground transition-transform ${
-                showParticipants ? "rotate-180" : ""
-              }`}
-            />
-          </button>
 
-          {/* Participants list */}
-          {showParticipants && (
-            <div className="flex flex-col gap-1 max-h-[40vh] overflow-y-auto">
-              {currentUser && (
-                <ParticipantItem user={currentUser} isCurrentUser />
-              )}
-              {users.map((user) => (
-                <ParticipantItem key={user.id} user={user} />
-              ))}
-            </div>
-          )}
+            <Collapsible open={showActions} onOpenChange={setShowActions}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground rounded-full hover:bg-muted">
+                  <Settings2 className="w-3.5 h-3.5" />
+                  <span className="text-xs">設定・アクション</span>
+                  <ChevronUp className={`w-3.5 h-3.5 transition-transform duration-300 ${showActions ? "rotate-180" : ""}`} />
+                </Button>
+              </CollapsibleTrigger>
+            </Collapsible>
+          </div>
+
+          {/* Collapsible Actions Panel */}
+          <Collapsible open={showActions} onOpenChange={setShowActions}>
+            <CollapsibleContent className="space-y-3 px-2 py-2 mb-4 bg-muted/20 rounded-2xl animate-in slide-in-from-bottom-2 fade-in">
+              {/* Action buttons row */}
+              <div className="flex items-center gap-3">
+                {/* Wake Lock toggle */}
+                <div
+                  className={`flex-1 bg-white dark:bg-slate-900 rounded-xl p-3 flex items-center justify-between transition-all border border-border/50 ${wakeLockEnabled ? "border-primary/50 shadow-[0_0_10px_rgba(59,130,246,0.2)]" : ""
+                    }`}
+                >
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Zap
+                        className={`w-4 h-4 ${wakeLockEnabled ? "text-primary" : "text-muted-foreground"}`}
+                      />
+                      <Label htmlFor="wakelock" className="text-xs font-semibold cursor-pointer">
+                        画面常時点灯
+                      </Label>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground pl-5.5">合流モード</span>
+                  </div>
+                  <Switch
+                    id="wakelock"
+                    checked={wakeLockEnabled}
+                    onCheckedChange={toggleWakeLock}
+                    className="scale-90 origin-right"
+                  />
+                </div>
+
+                {/* Notify button */}
+                <Button
+                  id="notify-button"
+                  onClick={handleNotify}
+                  size="sm"
+                  className="h-auto py-2.5 px-4 rounded-xl shadow-sm flex flex-col items-center gap-0.5 bg-white dark:bg-slate-900 text-foreground border border-border/50 hover:bg-muted"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Bell className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-xs font-semibold">現在地を通知</span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground font-normal opacity-80">仲間に知らせる</span>
+                </Button>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Scrollable list */}
+          <div className="max-h-[35vh] overflow-y-auto px-1 space-y-1">
+            {currentUser && (
+              <ParticipantItem user={currentUser} isCurrentUser onCenter={handleCenter} />
+            )}
+            {users.map((user) => (
+              <ParticipantItem key={user.id} user={user} onCenter={handleCenter} />
+            ))}
+          </div>
         </div>
 
         {/* Safe area padding for mobile */}

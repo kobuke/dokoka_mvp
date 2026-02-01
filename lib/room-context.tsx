@@ -96,26 +96,54 @@ const mockUsers: User[] = [
 export function RoomProvider({ children }: { children: ReactNode }) {
   const [room, setRoom] = useState<Room | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [users, setUsers] = useState<User[]>(mockUsers);
+  const [users, setUsers] = useState<User[]>([]);
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [wakeLockSentinel, setWakeLockSentinel] =
     useState<WakeLockSentinel | null>(null);
 
-  // Update user position
-  const updateUserPosition = useCallback(
-    (lat: number, lng: number) => {
-      if (currentUser) {
-        setCurrentUser({
-          ...currentUser,
-          lat,
-          lng,
-          lastUpdate: Date.now(),
-          status: "active",
-        });
+  // Load user from local storage
+  useEffect(() => {
+    if (typeof window !== "undefined" && room) {
+      const stored = localStorage.getItem(`dokoka_user_${room.id}`);
+      if (stored) {
+        try {
+          const userData = JSON.parse(stored);
+          setCurrentUser(userData);
+          // Also set as active immediately to show on map
+          setUsers(prev => {
+            // Avoid dupes if needed, or rely on update loop
+            return prev;
+          });
+        } catch (e) {
+          console.error("Failed to restore user", e);
+        }
       }
-    },
-    [currentUser]
-  );
+    }
+  }, [room]);
+
+  // Update user position
+  const updateUserPosition = useCallback((lat: number, lng: number) => {
+    setCurrentUser((prev) => {
+      // Create new user state if null (first update after restore might need this?) 
+      // Actually we only update if logged in.
+      if (!prev) return null;
+
+      const updated = {
+        ...prev,
+        lat,
+        lng,
+        lastUpdate: Date.now(),
+        status: "active" as const,
+      };
+
+      // Persist to local storage (debouncing would be better but this is MVP)
+      if (room) {
+        localStorage.setItem(`dokoka_user_${room.id}`, JSON.stringify(updated));
+      }
+
+      return updated;
+    });
+  }, [room]);
 
   // Toggle wake lock
   const toggleWakeLock = useCallback(async () => {
@@ -140,6 +168,44 @@ export function RoomProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [wakeLockEnabled, wakeLockSentinel]);
+
+  // Periodic status update check
+  useEffect(() => {
+    const checkStatus = () => {
+      const now = Date.now();
+      const statusThresholds = {
+        sleep: 5 * 60 * 1000, // 5 minutes
+        offline: 15 * 60 * 1000, // 15 minutes
+      };
+
+      const getStatus = (lastUpdate: number): "active" | "sleep" | "offline" => {
+        const diff = now - lastUpdate;
+        if (diff > statusThresholds.offline) return "offline";
+        if (diff > statusThresholds.sleep) return "sleep";
+        return "active";
+      };
+
+      setCurrentUser((prev) => {
+        if (!prev) return null;
+        const newStatus = getStatus(prev.lastUpdate);
+        return newStatus !== prev.status
+          ? { ...prev, status: newStatus }
+          : prev;
+      });
+
+      setUsers((prevUsers) =>
+        prevUsers.map((user) => {
+          const newStatus = getStatus(user.lastUpdate);
+          return newStatus !== user.status
+            ? { ...user, status: newStatus }
+            : user;
+        })
+      );
+    };
+
+    const interval = setInterval(checkStatus, 30000); // Check every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
 
   // Send "I'm here" notification
   const sendHereNotification = useCallback(() => {

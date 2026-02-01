@@ -15,7 +15,13 @@ import {
   type Room,
   type User,
 } from "../../../lib/room-context";
-import { MapView } from "../../../components/map-view";
+import dynamic from "next/dynamic";
+import { RoomHeader } from "../../../components/room-header";
+
+const MapView = dynamic(
+  () => import("../../../components/map-view").then((mod) => mod.MapView),
+  { ssr: false }
+);
 
 const COLORS = [
   "#3B82F6", // blue
@@ -24,8 +30,6 @@ const COLORS = [
   "#F59E0B", // amber
   "#8B5CF6", // violet
   "#EC4899", // pink
-  "#06B6D4", // cyan
-  "#F97316", // orange
 ];
 
 function RoomContent({
@@ -45,7 +49,7 @@ function RoomContent({
   const [agreed, setAgreed] = useState(false);
   const [entered, setEntered] = useState(false);
 
-  // Initialize room
+  // Initialize room and check persistence
   useEffect(() => {
     if (!room) {
       const durationHours = parseInt(duration) || 3;
@@ -57,7 +61,22 @@ function RoomContent({
       };
       setRoom(newRoom);
     }
-  }, [roomId, duration, room, setRoom]);
+
+    // Check persistence
+    const stored = localStorage.getItem(`dokoka_user_${roomId}`);
+    if (stored) {
+      try {
+        const userData = JSON.parse(stored);
+        setCurrentUser(userData);
+        setNickname(userData.nickname);
+        setSelectedColor(userData.color);
+        setEntered(true);
+        setAgreed(true);
+      } catch (e) {
+        console.error("Failed to restore", e);
+      }
+    }
+  }, [roomId, duration, room, setRoom, setCurrentUser]);
 
   // Check for expiration
   useEffect(() => {
@@ -89,10 +108,18 @@ function RoomContent({
 
     setCurrentUser(newUser);
     setEntered(true);
+
+    // Persist
+    localStorage.setItem(`dokoka_user_${roomId}`, JSON.stringify(newUser));
   };
 
   if (entered && currentUser) {
-    return <MapView />;
+    return (
+      <main className="min-h-screen bg-background relative">
+        <RoomHeader roomId={roomId} />
+        <MapView />
+      </main>
+    );
   }
 
   return (
@@ -147,11 +174,10 @@ function RoomContent({
                   <button
                     key={color}
                     onClick={() => setSelectedColor(color)}
-                    className={`w-10 h-10 rounded-full transition-all duration-200 ${
-                      selectedColor === color
-                        ? "ring-2 ring-offset-2 ring-primary scale-110"
-                        : "hover:scale-105"
-                    }`}
+                    className={`w-10 h-10 rounded-full transition-all duration-200 ${selectedColor === color
+                      ? "ring-2 ring-offset-2 ring-primary scale-110"
+                      : "hover:scale-105"
+                      }`}
                     style={{ backgroundColor: color }}
                     aria-label={`Select color ${color}`}
                   >

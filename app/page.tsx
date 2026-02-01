@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { MapPin, Clock, QrCode, Copy, Check, Share2 } from "lucide-react";
+import { MapPin, Clock, Copy, Check, Share2 } from "lucide-react";
+import QRCode from "react-qr-code";
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 10);
@@ -109,12 +110,14 @@ export default function HomePage() {
             </h2>
 
             <div className="flex flex-col items-center gap-6">
-              {/* QR Code placeholder */}
-              <div className="w-48 h-48 bg-gray-100 rounded-2xl flex items-center justify-center border-2 border-dashed border-gray-300">
-                <div className="flex flex-col items-center gap-2 text-gray-400">
-                  <QrCode className="w-16 h-16" />
-                  <span className="text-xs">QRコード</span>
-                </div>
+              {/* QR Code */}
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <QRCode
+                  value={shareUrl}
+                  size={160}
+                  style={{ height: "auto", maxWidth: "100%", width: "100%" }}
+                  viewBox={`0 0 256 256`}
+                />
               </div>
 
               {/* URL */}
