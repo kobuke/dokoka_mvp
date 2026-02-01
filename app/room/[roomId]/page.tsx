@@ -3,10 +3,10 @@
 import { useState, useEffect, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MapPin, Check } from "lucide-react";
-import { Button } from "../../../components/ui/button";
-import { Input } from "../../../components/ui/input";
-import { Checkbox } from "../../../components/ui/checkbox";
-import { Label } from "../../../components/ui/label";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Checkbox } from "./components/ui/checkbox";
+import { Label } from "./components/ui/label";
 import {
   generateId,
   generateRandomColor,
@@ -14,8 +14,8 @@ import {
   useRoom,
   type Room,
   type User,
-} from "../../../lib/room-context";
-import { MapView } from "../../../components/map-view";
+} from "./lib/room-context";
+import { MapView } from "./components/map-view";
 
 const COLORS = [
   "#3B82F6", // blue

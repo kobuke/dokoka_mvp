@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { CheckCircle, Home, Plus } from "lucide-react";
-import { Button } from "../../../../components/ui/button";
+import { Button } from "./components/ui/button";
 
 export default function RoomEndedPage() {
   const router = useRouter();
