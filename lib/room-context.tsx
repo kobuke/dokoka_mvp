@@ -19,6 +19,8 @@ export interface User {
   lng: number;
   status: "active" | "sleep" | "offline";
   lastUpdate: number;
+  isOnline: boolean;
+  disconnectedAt?: number;
 }
 
 export interface Room {
@@ -105,26 +107,69 @@ export function RoomProvider({ children }: { children: ReactNode }) {
       },
     });
 
+    // Load offline users from database and merge with presence
+    const loadAllUsers = async () => {
+      const newState = channel.presenceState();
+      const onlineUserIds = new Set<string>();
+      const activeUsers: User[] = [];
+
+      // Get online users from Presence
+      Object.keys(newState).forEach(key => {
+        if (key === currentUser.id) return; // Skip self
+        const presences = newState[key] as unknown as User[];
+        if (presences && presences.length > 0) {
+          const user = presences[0];
+          activeUsers.push({ ...user, isOnline: true });
+          onlineUserIds.add(user.id);
+        }
+      });
+
+      // Get offline users from database
+      try {
+        const { data: dbUsers, error } = await supabase
+          .from('room_users')
+          .select('*')
+          .eq('room_id', room.id)
+          .eq('is_online', false);
+
+        if (error) {
+          console.error('Error loading offline users:', error);
+        } else if (dbUsers) {
+          dbUsers.forEach((dbUser: any) => {
+            // Only add if not currently online and not self
+            if (!onlineUserIds.has(dbUser.id) && dbUser.id !== currentUser.id) {
+              activeUsers.push({
+                id: dbUser.id,
+                nickname: dbUser.nickname,
+                color: dbUser.color,
+                lat: dbUser.lat,
+                lng: dbUser.lng,
+                status: 'offline',
+                lastUpdate: new Date(dbUser.last_update).getTime(),
+                isOnline: false,
+                disconnectedAt: dbUser.disconnected_at
+                  ? new Date(dbUser.disconnected_at).getTime()
+                  : undefined,
+              });
+            }
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load offline users:', err);
+      }
+
+      setUsers(activeUsers);
+    };
+
     channel
       .on("presence", { event: "sync" }, () => {
-        const newState = channel.presenceState();
-        const activeUsers: User[] = [];
-
-        Object.keys(newState).forEach(key => {
-          if (key === currentUser.id) return; // Skip self
-          // Each key has an array of presence objects
-          const presences = newState[key] as unknown as User[];
-          if (presences && presences.length > 0) {
-            // Take the latest one
-            activeUsers.push(presences[0]);
-          }
-        });
-
-        setUsers(activeUsers);
+        loadAllUsers();
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track(currentUser);
+          // Initial load
+          loadAllUsers();
         }
       });
 
@@ -144,6 +189,66 @@ export function RoomProvider({ children }: { children: ReactNode }) {
     }
   }, [currentUser]);
 
+  // Sync currentUser to Supabase database
+  useEffect(() => {
+    if (!room || !currentUser) return;
+
+    const syncToDatabase = async () => {
+      try {
+        const { error } = await supabase
+          .from('room_users')
+          .upsert({
+            id: currentUser.id,
+            room_id: room.id,
+            nickname: currentUser.nickname,
+            color: currentUser.color,
+            lat: currentUser.lat,
+            lng: currentUser.lng,
+            is_online: true,
+            last_update: new Date(currentUser.lastUpdate).toISOString(),
+            disconnected_at: null,
+          }, {
+            onConflict: 'id'
+          });
+
+        if (error) {
+          console.error('Error syncing to database:', error);
+        }
+      } catch (err) {
+        console.error('Failed to sync to database:', err);
+      }
+    };
+
+    syncToDatabase();
+  }, [currentUser, room]);
+
+  // Mark user as offline on page unload
+  useEffect(() => {
+    if (!currentUser || !room) return;
+
+    const handleBeforeUnload = async () => {
+      try {
+        await supabase
+          .from('room_users')
+          .update({
+            is_online: false,
+            disconnected_at: new Date().toISOString(),
+          })
+          .eq('id', currentUser.id);
+      } catch (err) {
+        console.error('Failed to mark user as offline:', err);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Also mark offline on component unmount
+      handleBeforeUnload();
+    };
+  }, [currentUser, room]);
+
 
   // Update user position
   const updateUserPosition = useCallback((lat: number, lng: number) => {
@@ -156,6 +261,7 @@ export function RoomProvider({ children }: { children: ReactNode }) {
         lng,
         lastUpdate: Date.now(),
         status: "active" as const,
+        isOnline: true,
       };
 
       // Persist to local storage

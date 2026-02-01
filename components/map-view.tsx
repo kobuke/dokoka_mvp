@@ -55,6 +55,23 @@ function CountdownTimer() {
   );
 }
 
+// Calculate time ago string
+function getTimeAgoString(disconnectedAt?: number): string {
+  if (!disconnectedAt) return "";
+  const now = Date.now();
+  const diffMs = now - disconnectedAt;
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+  if (diffMinutes < 1) return "今";
+  if (diffMinutes < 60) return `${diffMinutes}分前`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}時間前`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}日前`;
+}
+
 // Participant list item
 function ParticipantItem({
   user,
@@ -71,6 +88,9 @@ function ParticipantItem({
     window.open(url, "_blank");
   };
 
+  const isOffline = !user.isOnline || user.status === "offline";
+  const timeAgo = isOffline ? getTimeAgoString(user.disconnectedAt) : "";
+
   return (
     <div
       className="flex items-center justify-between py-3 px-4 rounded-xl hover:bg-muted/30 transition-colors cursor-pointer active:bg-muted/50"
@@ -80,7 +100,7 @@ function ParticipantItem({
         <div
           className={`w-10 h-10 rounded-full flex items-center justify-center ${user.status === "sleep"
             ? "opacity-50"
-            : user.status === "offline"
+            : isOffline
               ? "grayscale opacity-40"
               : ""
             }`}
@@ -102,7 +122,9 @@ function ParticipantItem({
               ? "アクティブ"
               : user.status === "sleep"
                 ? "スリープ"
-                : "オフライン"}
+                : isOffline && timeAgo
+                  ? `オフライン (${timeAgo})`
+                  : "オフライン"}
           </p>
         </div>
       </div>

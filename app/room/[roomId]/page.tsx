@@ -15,6 +15,7 @@ import {
   type Room,
   type User,
 } from "../../../lib/room-context";
+import { supabase } from "../../../lib/supabase";
 import dynamic from "next/dynamic";
 import { RoomHeader } from "../../../components/room-header";
 
@@ -93,10 +94,37 @@ function RoomContent({
     return () => clearInterval(interval);
   }, [entered, isRoomExpired, roomId, router]);
 
-  const handleEnter = () => {
+  const handleEnter = async () => {
     if (!nickname.trim() || !agreed) return;
 
-    const newUser: User = {
+    // Check if user with same nickname exists in database
+    let existingUser: User | null = null;
+    try {
+      const { data: dbUsers, error } = await supabase
+        .from('room_users')
+        .select('*')
+        .eq('room_id', roomId)
+        .eq('nickname', nickname.trim())
+        .limit(1);
+
+      if (!error && dbUsers && dbUsers.length > 0) {
+        const dbUser = dbUsers[0];
+        existingUser = {
+          id: dbUser.id,
+          nickname: dbUser.nickname,
+          color: dbUser.color,
+          lat: dbUser.lat,
+          lng: dbUser.lng,
+          status: 'active',
+          lastUpdate: Date.now(),
+          isOnline: true,
+        };
+      }
+    } catch (err) {
+      console.error('Error checking for existing user:', err);
+    }
+
+    const newUser: User = existingUser || {
       id: generateId(),
       nickname: nickname.trim(),
       color: selectedColor,
@@ -104,6 +132,7 @@ function RoomContent({
       lng: 139.7009,
       status: "active",
       lastUpdate: Date.now(),
+      isOnline: true,
     };
 
     setCurrentUser(newUser);
