@@ -11,11 +11,11 @@ import {
   Zap,
   Clock,
 } from "lucide-react";
-import { Button } from "./ui/button";
-import { Switch } from "./ui/switch";
-import { Label } from "./ui/label";
-import { useRoom, type User } from "../lib/room-context";
-import { useGeolocation } from "../hooks/use-geolocation";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { useRoom, type User } from "@/lib/room-context";
+import { useGeolocation } from "@/hooks/use-geolocation";
 
 // Map pin component
 function UserPin({
